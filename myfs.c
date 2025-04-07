@@ -1,4 +1,3 @@
-
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,12 +8,24 @@
 #define SIZE 1024000
 #define END 65535
 #define FREE 0 
-#define ROOTBLOCKNUM 2
+#define ROOTBLOCKNUM 5
 #define MAXOPENFILE 10
+
+/////////////////////
+/*
+mvhard 虚拟磁盘
+0      引导块
+1-2    FAT1
+3-4    FAT2
+5-6    根目录区
+7-     数据区
+*/
+/////////////////////
+
 
 // FAT表项结构
 typedef struct FAT {
-    unsigned short id;
+    unsigned short id; // 该块所对应的下一个块
 } fat;
 
 // 文件控制块结构
@@ -32,8 +43,8 @@ typedef struct FCB {
 // 引导块结构
 typedef struct BLOCK0 {
     char information[200];
-    unsigned short root;
-    unsigned char *startblock;
+    unsigned short root;   // 根目录起始块号
+    unsigned char* startblock; // 数据区起始地址
 } block0;
 
 // 用户打开文件表结构
@@ -52,26 +63,26 @@ typedef struct USEROPEN {
 } useropen;
 
 // 全局变量声明
- unsigned char *myvhard;
- useropen openfilelist[MAXOPENFILE];
- int curdir;
- char currentdir[80];
- unsigned char *startp;
- fat *fat1, *fat2;
- block0 *bootblock;
+unsigned char* myvhard;
+useropen openfilelist[MAXOPENFILE];
+int curdir;
+char currentdir[80];
+unsigned char* startp;
+fat* fat1, * fat2;
+block0* bootblock;
 
 void my_format();
 void my_exitsys();
-void my_cd(char *dirname);
+void my_cd(char* dirname);
 
 void startsys() {
-    myvhard = (unsigned char *)malloc(SIZE);
+    myvhard = (unsigned char*)malloc(SIZE);
     if (!myvhard) {
         printf("Failed to allocate memory for virtual disk.\n");
         exit(1);
     }
 
-    FILE *fp = fopen("filesys", "rb");
+    FILE* fp = fopen("filesys", "rb");
     if (fp) {
         fread(myvhard, SIZE, 1, fp);
         fclose(fp);
@@ -80,13 +91,13 @@ void startsys() {
     }
 
     // 初始化全局指针
-    bootblock = (block0 *)myvhard;
-    fat1 = (fat *)(myvhard + BLOCKSIZE);          // FAT1起始块
-    fat2 = (fat *)(myvhard + 3 * BLOCKSIZE);      // FAT2起始块（FAT1占2块）
+    bootblock = (block0*)myvhard;
+    fat1 = (fat*)(myvhard + BLOCKSIZE);          // FAT1起始块
+    fat2 = (fat*)(myvhard + 3 * BLOCKSIZE);      // FAT2起始块（FAT1占2块）
 
     // 初始化用户打开文件表项0（根目录）
-    fcb *root_fcb = (fcb *)(myvhard + bootblock->root * BLOCKSIZE);
-    useropen *root = &openfilelist[0];
+    fcb* root_fcb = (fcb*)(myvhard + bootblock->root * BLOCKSIZE);
+    useropen* root = &openfilelist[0];
     strcpy(root->filename, ".");
     strcpy(root->exname, "");
     root->attribute = root_fcb->attribute;
@@ -110,23 +121,30 @@ void startsys() {
 // 格式化虚拟磁盘
 void my_format() {
     if (!myvhard) {
-        myvhard = (unsigned char *)malloc(SIZE);
+        myvhard = (unsigned char*)malloc(SIZE);
     }
 
     // 初始化引导块
-    bootblock = (block0 *)myvhard;
+    bootblock = (block0*)myvhard;
     strcpy(bootblock->information, "Simple File System");
     bootblock->root = ROOTBLOCKNUM;                    // 根目录起始块号
     bootblock->startblock = myvhard + 7 * BLOCKSIZE;   // 数据区起始地址
 
     // 初始化FAT表
     int total_blocks = SIZE / BLOCKSIZE;
-    fat1 = (fat *)(myvhard + BLOCKSIZE);
-    fat2 = (fat *)(myvhard + 3 * BLOCKSIZE);
+    fat1 = (fat*)(myvhard + BLOCKSIZE);
+    fat2 = (fat*)(myvhard + 3 * BLOCKSIZE);
 
     // 标记系统使用的块
     for (int i = 0; i < total_blocks; i++) {
         if (i == 0 || (i >= 1 && i <= 4) || i == ROOTBLOCKNUM || i == ROOTBLOCKNUM + 1) {
+            /*
+                0 - 引导块
+                1-2 - FAT1
+                3-4 - FAT2
+                5-6 - 根目录区（其他目录也可能连续存放在这两个块中）
+                他们是系统使用的块，因此标记为END
+            */
             fat1[i].id = END;
             fat2[i].id = END;
         } else {
@@ -136,12 +154,12 @@ void my_format() {
     }
 
     // 初始化根目录区（块5和块6）
-    fcb *root_dir = (fcb *)(myvhard + ROOTBLOCKNUM * BLOCKSIZE);
+    fcb* root_dir = (fcb*)(myvhard + ROOTBLOCKNUM * BLOCKSIZE);
     memset(root_dir, 0, 2 * BLOCKSIZE);
 
     // 创建根目录的.和..条目
     strcpy(root_dir[0].filename, ".");
-    root_dir[0].attribute = 0x10; // 目录
+    root_dir[0].attribute = 0x10; // 0x10 表示该文件为目录文件
     root_dir[0].first = ROOTBLOCKNUM;
     root_dir[0].length = 2 * BLOCKSIZE;
     root_dir[0].free = 1;
@@ -153,7 +171,7 @@ void my_format() {
     root_dir[1].free = 1;
 
     // 设置用户打开文件表项0
-    useropen *root = &openfilelist[0];
+    useropen* root = &openfilelist[0];
     strcpy(root->filename, ".");
     strcpy(root->exname, "");
     root->attribute = 0x10;
@@ -170,7 +188,7 @@ void my_format() {
 // 退出并保存文件系统
 void my_exitsys() {
     if (myvhard) {
-        FILE *fp = fopen("filesys", "wb");
+        FILE* fp = fopen("filesys", "wb");
         if (fp) {
             fwrite(myvhard, SIZE, 1, fp);
             fclose(fp);
@@ -181,9 +199,9 @@ void my_exitsys() {
 }
 
 
-int split_path(char *path, char **parts) {
+int split_path(char* path, char** parts) {
     int count = 0;
-    char *token = strtok(path, "/");
+    char* token = strtok(path, "/");
     while (token != NULL && count < MAXOPENFILE) {
         parts[count++] = token;
         token = strtok(NULL, "/");
@@ -192,11 +210,11 @@ int split_path(char *path, char **parts) {
 }
 
 
-int find_fcb(useropen *dir, char *name, fcb **found) {
+int find_fcb(useropen* dir, char* name, fcb** found) {
     unsigned short block = dir->first;
-    
+
     while (block != END) {
-        fcb *dir_block = (fcb *)(myvhard + block * BLOCKSIZE);
+        fcb* dir_block = (fcb*)(myvhard + block * BLOCKSIZE);
         for (int j = 0; j < BLOCKSIZE / sizeof(fcb); j++) {
             if (dir_block[j].free == 1) {
                 // 比较文件名(不区分大小写)
@@ -211,12 +229,12 @@ int find_fcb(useropen *dir, char *name, fcb **found) {
     return -1; // 未找到
 }
 
-void my_cd(char *dirname) {
+void my_cd(char* dirname) {
     if (dirname == NULL || strlen(dirname) == 0) {
         printf("Current directory: %s\n", currentdir);
         return;
     }
-    
+
     if (strcmp(dirname, ".") == 0) {
         return; // 当前目录，不做任何操作
     }
@@ -227,18 +245,18 @@ void my_cd(char *dirname) {
             printf("Already at root directory\n");
             return;
         }
-        
+
         // 获取父目录路径
         char parent_dir[80];
         strcpy(parent_dir, currentdir);
-        
+
         // 移除末尾的'/'
-        if (parent_dir[strlen(parent_dir)-1] == '/') {
-            parent_dir[strlen(parent_dir)-1] = '\0';
+        if (parent_dir[strlen(parent_dir) - 1] == '/') {
+            parent_dir[strlen(parent_dir) - 1] = '\0';
         }
-        
+
         // 找到上一级目录
-        char *last_slash = strrchr(parent_dir, '/');
+        char* last_slash = strrchr(parent_dir, '/');
         if (last_slash != NULL) {
             *last_slash = '\0';
             if (strlen(parent_dir) == 0) {
@@ -247,24 +265,24 @@ void my_cd(char *dirname) {
                 strcat(parent_dir, "/"); // 确保以/结尾
             }
         }
-        
+
         // 查找父目录FCB
-        fcb *parent_fcb = NULL;
+        fcb* parent_fcb = NULL;
         if (find_fcb(&openfilelist[curdir], "..", &parent_fcb) != 0) {
             printf("Error: Parent directory not found\n");
             return;
         }
-        
+
         // 更新当前目录
         curdir = 0; // 默认回到根目录
         for (int i = 0; i < MAXOPENFILE; i++) {
-            if (openfilelist[i].topenfile && 
+            if (openfilelist[i].topenfile &&
                 openfilelist[i].first == parent_fcb->first) {
                 curdir = i;
                 break;
             }
         }
-        
+
         strcpy(currentdir, parent_dir);
         printf("Current directory changed to: %s\n", currentdir);
         return;
@@ -274,14 +292,14 @@ void my_cd(char *dirname) {
     // 处理路径中的斜杠
     char normalized[80];
     strcpy(normalized, dirname);
-    if (normalized[strlen(normalized)-1] == '/') {
-        normalized[strlen(normalized)-1] = '\0';
+    if (normalized[strlen(normalized) - 1] == '/') {
+        normalized[strlen(normalized) - 1] = '\0';
     }
 
     // 查找目录
-    fcb *target_fcb = NULL;
+    fcb* target_fcb = NULL;
 
-    
+
     if (find_fcb(&openfilelist[curdir], normalized, &target_fcb) != 0) {
         printf("Error: Directory '%s' not found in %s\n", normalized, currentdir);
         return;
@@ -301,21 +319,21 @@ void my_cd(char *dirname) {
     } else {
         // 相对路径
         strcpy(new_dir, currentdir);
-        if (currentdir[strlen(currentdir)-1] != '/') {
+        if (currentdir[strlen(currentdir) - 1] != '/') {
             strcat(new_dir, "/");
         }
         strcat(new_dir, normalized);
     }
-    
+
     // 确保路径以/结尾
-    if (new_dir[strlen(new_dir)-1] != '/') {
+    if (new_dir[strlen(new_dir) - 1] != '/') {
         strcat(new_dir, "/");
     }
 
     // 查找是否已经打开
     int found = -1;
     for (int j = 0; j < MAXOPENFILE; j++) {
-        if (openfilelist[j].topenfile && 
+        if (openfilelist[j].topenfile &&
             openfilelist[j].first == target_fcb->first) {
             found = j;
             break;
@@ -350,7 +368,7 @@ void my_cd(char *dirname) {
 
 // 显示目录内容函数
 void my_ls() {
-    useropen *current = &openfilelist[curdir];
+    useropen* current = &openfilelist[curdir];
     unsigned short block = current->first;
     int file_count = 0;
     int dir_count = 0;
@@ -361,13 +379,13 @@ void my_ls() {
 
     // 遍历当前目录的所有块
     while (block != END) {
-        fcb *dir_block = (fcb *)(myvhard + block * BLOCKSIZE);
-        
+        fcb* dir_block = (fcb*)(myvhard + block * BLOCKSIZE);
+
         // 遍历块中的所有FCB
         for (int i = 0; i < BLOCKSIZE / sizeof(fcb); i++) {
             if (dir_block[i].free == 1) {  // 有效的FCB
                 // 跳过 "." 和 ".." 目录项
-                if (strcmp(dir_block[i].filename, ".") == 0 || 
+                if (strcmp(dir_block[i].filename, ".") == 0 ||
                     strcmp(dir_block[i].filename, "..") == 0) {
                     continue;
                 }
@@ -375,11 +393,11 @@ void my_ls() {
                 // 解析日期和时间
                 unsigned short date = dir_block[i].date;
                 unsigned short time = dir_block[i].time;
-                
+
                 int year = (date >> 9) + 1980;
                 int month = (date >> 5) & 0x0F;
                 int day = date & 0x1F;
-                
+
                 int hour = time >> 11;
                 int minute = (time >> 5) & 0x3F;
                 int second = (time & 0x1F) * 2;
@@ -387,7 +405,7 @@ void my_ls() {
                 // 显示文件/目录信息
                 if (dir_block[i].attribute & 0x10) { // 目录
                     printf("%-12s %-4s %10s %04d-%02d-%02d %02d:%02d:%02d\n",
-                           dir_block[i].filename, 
+                           dir_block[i].filename,
                            "<DIR>",
                            "",
                            year, month, day,
@@ -415,16 +433,16 @@ void my_ls() {
 
 
 // 辅助函数：检查目录是否为空
-bool is_dir_empty(useropen *dir) {
+bool is_dir_empty(useropen* dir) {
     unsigned short block = dir->first;
     int entry_count = 0;
 
     while (block != END) {
-        fcb *dir_block = (fcb *)(myvhard + block * BLOCKSIZE);
+        fcb* dir_block = (fcb*)(myvhard + block * BLOCKSIZE);
         for (int i = 0; i < BLOCKSIZE / sizeof(fcb); i++) {
             if (dir_block[i].free == 1) {
                 // 跳过 "." 和 ".." 目录项
-                if (strcmp(dir_block[i].filename, ".") != 0 && 
+                if (strcmp(dir_block[i].filename, ".") != 0 &&
                     strcmp(dir_block[i].filename, "..") != 0) {
                     return false;
                 }
@@ -437,29 +455,29 @@ bool is_dir_empty(useropen *dir) {
 }
 
 // 创建子目录函数
-void my_mkdir(char *dirname) {
+void my_mkdir(char* dirname) {
     // 检查目录名长度
     if (strlen(dirname) > 8) {
         printf("Directory name too long (max 8 characters)\n");
         return;
     }
 
-    useropen *current = &openfilelist[curdir];
-    
+    useropen* current = &openfilelist[curdir];
+
     // 检查是否重名
-    fcb *existing = NULL;
+    fcb* existing = NULL;
     if (find_fcb(current, dirname, &existing) == 0) {
         printf("Directory already exists: %s\n", dirname);
         return;
     }
 
     // 寻找空闲FCB槽位
-    fcb *free_fcb = NULL;
+    fcb* free_fcb = NULL;
     unsigned short block = current->first;
     int found = 0;
-    
+
     while (block != END && !found) {
-        fcb *dir_block = (fcb *)(myvhard + block * BLOCKSIZE);
+        fcb* dir_block = (fcb*)(myvhard + block * BLOCKSIZE);
         for (int i = 0; i < BLOCKSIZE / sizeof(fcb); i++) {
             if (dir_block[i].free == 0) {
                 free_fcb = &dir_block[i];
@@ -473,7 +491,7 @@ void my_mkdir(char *dirname) {
     if (!free_fcb) {
         // 需要分配新的目录块
         unsigned short new_block = 0;
-        for (int i = 5; i < SIZE/BLOCKSIZE; i++) {
+        for (int i = 5; i < SIZE / BLOCKSIZE; i++) {
             if (fat1[i].id == FREE) {
                 new_block = i;
                 break;
@@ -497,14 +515,14 @@ void my_mkdir(char *dirname) {
         fat2[block].id = new_block;
 
         // 初始化新块
-        fcb *new_dir_block = (fcb *)(myvhard + new_block * BLOCKSIZE);
+        fcb* new_dir_block = (fcb*)(myvhard + new_block * BLOCKSIZE);
         memset(new_dir_block, 0, BLOCKSIZE);
         free_fcb = &new_dir_block[0];
     }
 
     // 分配新目录的空间
     unsigned short new_dir_block = 0;
-    for (int i = 5; i < SIZE/BLOCKSIZE; i++) {
+    for (int i = 5; i < SIZE / BLOCKSIZE; i++) {
         if (fat1[i].id == FREE) {
             new_dir_block = i;
             break;
@@ -518,7 +536,7 @@ void my_mkdir(char *dirname) {
     // 初始化新目录
     fat1[new_dir_block].id = END;
     fat2[new_dir_block].id = END;
-    fcb *new_dir = (fcb *)(myvhard + new_dir_block * BLOCKSIZE);
+    fcb* new_dir = (fcb*)(myvhard + new_dir_block * BLOCKSIZE);
     memset(new_dir, 0, BLOCKSIZE);
 
     // 创建 . 和 .. 目录项
@@ -527,7 +545,7 @@ void my_mkdir(char *dirname) {
     new_dir[0].first = new_dir_block;
     new_dir[0].length = BLOCKSIZE;
     new_dir[0].free = 1;
-    
+
     strcpy(new_dir[1].filename, "..");
     new_dir[1].attribute = 0x10;
     new_dir[1].first = current->first;
@@ -536,13 +554,13 @@ void my_mkdir(char *dirname) {
 
     // 设置当前时间
     time_t now = time(NULL);
-    struct tm *tm_now = localtime(&now);
-    unsigned short date = ((tm_now->tm_year - 80) << 9) | 
-                         ((tm_now->tm_mon + 1) << 5) | 
-                         tm_now->tm_mday;
-    unsigned short time = (tm_now->tm_hour << 11) | 
-                         (tm_now->tm_min << 5) | 
-                         (tm_now->tm_sec / 2);
+    struct tm* tm_now = localtime(&now);
+    unsigned short date = ((tm_now->tm_year - 80) << 9) |
+        ((tm_now->tm_mon + 1) << 5) |
+        tm_now->tm_mday;
+    unsigned short time = (tm_now->tm_hour << 11) |
+        (tm_now->tm_min << 5) |
+        (tm_now->tm_sec / 2);
 
     // 创建新目录的FCB
     strcpy(free_fcb->filename, dirname);
@@ -560,11 +578,11 @@ void my_mkdir(char *dirname) {
 }
 
 // 删除子目录函数
-void my_rmdir(char *dirname) {
-    useropen *current = &openfilelist[curdir];
-    
+void my_rmdir(char* dirname) {
+    useropen* current = &openfilelist[curdir];
+
     // 查找要删除的目录
-    fcb *target_fcb = NULL;
+    fcb* target_fcb = NULL;
     if (find_fcb(current, dirname, &target_fcb) != 0) {
         printf("Directory not found: %s\n", dirname);
         return;
@@ -581,7 +599,7 @@ void my_rmdir(char *dirname) {
     strcpy(temp_dir.filename, dirname);
     temp_dir.first = target_fcb->first;
     temp_dir.length = target_fcb->length;
-    
+
     if (!is_dir_empty(&temp_dir)) {
         printf("Directory not empty: %s\n", dirname);
         return;
@@ -605,29 +623,29 @@ void my_rmdir(char *dirname) {
     printf("Directory removed: %s\n", dirname);
 }
 
-int my_create(char *filename) {
+int my_create(char* filename) {
     // 检查文件名长度
     if (strlen(filename) > 8) {
         printf("Filename too long (max 8 characters)\n");
         return -1;
     }
 
-    useropen *current = &openfilelist[curdir];
-    
+    useropen* current = &openfilelist[curdir];
+
     // 检查是否重名
-    fcb *existing = NULL;
+    fcb* existing = NULL;
     if (find_fcb(current, filename, &existing) == 0) {
         printf("File already exists: %s\n", filename);
         return -1;
     }
 
     // 寻找空闲FCB槽位
-    fcb *free_fcb = NULL;
+    fcb* free_fcb = NULL;
     unsigned short block = current->first;
     int found = 0;
-    
+
     while (block != END && !found) {
-        fcb *dir_block = (fcb *)(myvhard + block * BLOCKSIZE);
+        fcb* dir_block = (fcb*)(myvhard + block * BLOCKSIZE);
         for (int i = 0; i < BLOCKSIZE / sizeof(fcb); i++) {
             if (dir_block[i].free == 0) {
                 free_fcb = &dir_block[i];
@@ -641,7 +659,7 @@ int my_create(char *filename) {
     if (!free_fcb) {
         // 需要分配新的目录块
         unsigned short new_block = 0;
-        for (int i = ROOTBLOCKNUM + 1; i < SIZE/BLOCKSIZE; i++) {
+        for (int i = ROOTBLOCKNUM + 1; i < SIZE / BLOCKSIZE; i++) {
             if (fat1[i].id == FREE) {
                 new_block = i;
                 break;
@@ -665,14 +683,14 @@ int my_create(char *filename) {
         fat2[block].id = new_block;
 
         // 初始化新块
-        fcb *new_dir_block = (fcb *)(myvhard + new_block * BLOCKSIZE);
+        fcb* new_dir_block = (fcb*)(myvhard + new_block * BLOCKSIZE);
         memset(new_dir_block, 0, BLOCKSIZE);
         free_fcb = &new_dir_block[0];
     }
 
     // 分配新文件的块
     unsigned short new_file_block = 0;
-    for (int i = ROOTBLOCKNUM + 1; i < SIZE/BLOCKSIZE; i++) {
+    for (int i = ROOTBLOCKNUM + 1; i < SIZE / BLOCKSIZE; i++) {
         if (fat1[i].id == FREE) {
             new_file_block = i;
             break;
@@ -690,13 +708,13 @@ int my_create(char *filename) {
 
     // 设置当前时间
     time_t now = time(NULL);
-    struct tm *tm_now = localtime(&now);
-    unsigned short date = ((tm_now->tm_year - 80) << 9) | 
-                         ((tm_now->tm_mon + 1) << 5) | 
-                         tm_now->tm_mday;
-    unsigned short time = (tm_now->tm_hour << 11) | 
-                         (tm_now->tm_min << 5) | 
-                         (tm_now->tm_sec / 2);
+    struct tm* tm_now = localtime(&now);
+    unsigned short date = ((tm_now->tm_year - 80) << 9) |
+        ((tm_now->tm_mon + 1) << 5) |
+        tm_now->tm_mday;
+    unsigned short time = (tm_now->tm_hour << 11) |
+        (tm_now->tm_min << 5) |
+        (tm_now->tm_sec / 2);
 
     // 创建新文件的FCB
     strcpy(free_fcb->filename, filename);
@@ -737,11 +755,11 @@ int my_create(char *filename) {
 }
 
 
-void my_rm(char *filename) {
-    useropen *current = &openfilelist[curdir];
-    
+void my_rm(char* filename) {
+    useropen* current = &openfilelist[curdir];
+
     // 查找要删除的文件
-    fcb *target_fcb = NULL;
+    fcb* target_fcb = NULL;
     if (find_fcb(current, filename, &target_fcb) != 0) {
         printf("File not found: %s\n", filename);
         return;
@@ -755,7 +773,7 @@ void my_rm(char *filename) {
 
     // 检查文件是否被打开
     for (int i = 0; i < MAXOPENFILE; i++) {
-        if (openfilelist[i].topenfile && 
+        if (openfilelist[i].topenfile &&
             openfilelist[i].first == target_fcb->first) {
             printf("File is currently open (fd=%d), close it first\n", i);
             return;
@@ -780,17 +798,17 @@ void my_rm(char *filename) {
     printf("File removed: %s\n", filename);
 }
 
-int my_open(char *filename) {
+int my_open(char* filename) {
     // 检查文件名长度
     if (strlen(filename) > 8) {
         printf("Filename too long (max 8 characters)\n");
         return -1;
     }
 
-    useropen *current = &openfilelist[curdir];
-    
+    useropen* current = &openfilelist[curdir];
+
     // 查找文件FCB
-    fcb *file_fcb = NULL;
+    fcb* file_fcb = NULL;
     if (find_fcb(current, filename, &file_fcb) != 0) {
         printf("File not found: %s\n", filename);
         return -1;
@@ -804,7 +822,7 @@ int my_open(char *filename) {
 
     // 检查是否已经打开
     for (int i = 0; i < MAXOPENFILE; i++) {
-        if (openfilelist[i].topenfile && 
+        if (openfilelist[i].topenfile &&
             openfilelist[i].first == file_fcb->first &&
             strcmp(openfilelist[i].dir, currentdir) == 0) {
             printf("File already opened (fd=%d)\n", i);
@@ -854,9 +872,9 @@ void my_close(int fd) {
     // 如果需要，更新FCB信息
     if (openfilelist[fd].fcbstate) {
         // 查找父目录
-        useropen *parent = NULL;
+        useropen* parent = NULL;
         for (int i = 0; i < MAXOPENFILE; i++) {
-            if (openfilelist[i].topenfile && 
+            if (openfilelist[i].topenfile &&
                 strcmp(openfilelist[i].dir, openfilelist[fd].dir) == 0) {
                 parent = &openfilelist[i];
                 break;
@@ -865,12 +883,12 @@ void my_close(int fd) {
 
         if (parent) {
             // 查找对应的FCB
-            fcb *file_fcb = NULL;
+            fcb* file_fcb = NULL;
             if (find_fcb(parent, openfilelist[fd].filename, &file_fcb) == 0) {
                 // 更新FCB信息
                 file_fcb->length = openfilelist[fd].length;
                 // 可以添加其他需要同步的属性
-                
+
                 // 标记父目录为已修改
                 parent->fcbstate = 1;
             }
@@ -897,46 +915,37 @@ int main() {
         if (strcmp(cmd, "my_format") == 0) {
             my_format();
             printf("File system formatted.\n");
-        } 
-        else if (strcmp(cmd, "my_open") == 0) {
+        } else if (strcmp(cmd, "my_open") == 0) {
             scanf("%s", arg);
             fd = my_open(arg);
-        }
-        else if (strcmp(cmd, "my_close") == 0) {
+        } else if (strcmp(cmd, "my_close") == 0) {
             scanf("%d", &fd);
             my_close(fd);
-        }
-        else if (strcmp(cmd, "my_exitsys") == 0) {
+        } else if (strcmp(cmd, "my_exitsys") == 0) {
             my_exitsys();
             printf("Exiting system.\n");
             break;
-        
-        } 
-        else if (strcmp(cmd, "my_create") == 0) {
+
+        } else if (strcmp(cmd, "my_create") == 0) {
             scanf("%s", arg);
             my_create(arg);
-        }
-        else if (strcmp(cmd, "my_rm") == 0) {
+        } else if (strcmp(cmd, "my_rm") == 0) {
             scanf("%s", arg);
             my_rm(arg);
-        }
-        else if (strcmp(cmd, "my_mkdir") == 0) {
-           
+        } else if (strcmp(cmd, "my_mkdir") == 0) {
+
             scanf("%s", path);
             my_mkdir(path);
         } else if (strcmp(cmd, "my_rmdir") == 0) {
             scanf("%s", path);
             my_rmdir(path);
-        }
-        else if(strcmp(cmd, "my_ls") == 0){
+        } else if (strcmp(cmd, "my_ls") == 0) {
             my_ls();
-        }
-        else if (strcmp(cmd, "my_cd") == 0) {
+        } else if (strcmp(cmd, "my_cd") == 0) {
             scanf("%s", path);
             // printf("%s",path);
             my_cd(path);
-        }
-        else {
+        } else {
             printf("Unknown command.\n");
         }
     }
