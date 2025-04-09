@@ -258,48 +258,57 @@ int find_fcb(useropen* dir, char* name, fcb** found) {
 void parse_path(char* path, char* res) {
     // 获取父目录的路径
     char parent_dir[80];
-    strcpy(parent_dir, currentdir);
-    if (parent_dir[strlen(parent_dir) - 1] == '/') {
-        parent_dir[strlen(parent_dir) - 1] = '\0'; // 移除末尾的'/'
-    }
-    char* last_slash = strrchr(parent_dir, '/');
-    if (last_slash != NULL) {
-        *last_slash = '\0'; // 移除最后一个'/'
-        if (strlen(parent_dir) == 0) {
-            strcpy(parent_dir, "/"); // 回到根目录
-        } else {
-            strcat(parent_dir, "/"); // 确保以/结尾
+    if (strcmp(currentdir, "/") == 0) {
+        strcpy(parent_dir, "/");
+    } else {
+        strcpy(parent_dir, currentdir);
+        if (parent_dir[strlen(parent_dir) - 1] == '/') {
+            parent_dir[strlen(parent_dir) - 1] = '\0'; // 移除末尾的'/'
+        }
+        char* last_slash = strrchr(parent_dir, '/');
+        if (last_slash != NULL) {
+            *last_slash = '\0'; // 移除最后一个'/'
+            if (strlen(parent_dir) == 0) {
+                strcpy(parent_dir, "/"); // 回到根目录
+            } else {
+                strcat(parent_dir, "/"); // 确保以/结尾
+            }
         }
     }
-    // 分割path
-    char* original = strdup(path); // 复制原始路径字符串
-    char* parts[MAXOPENFILE];
-    int count = split_path(path, parts); // 分割路径字符串
 
     // 设置绝对路径栈的初始状态
     char stack[MAXOPENFILE][80];
     int top = -1;
-    int start = 0; // 后续解析路径时对应对起始位置
-    if (original[0] == '/') {
+    int start = 0; // 后续解析路径时对应的起始位置
+    if (path[0] == '/') {
         strcpy(stack[++top], "/");
+        //printf("Push1: %s\n", stack[top]);
         start = 0;
-    } else if (original[0] == '.' && original[1] == '.') {
+    } else if (path[0] == '.' && path[1] == '.') {
         char* splited[MAXOPENFILE];
         int cnt = split_path(parent_dir, splited); // 分割父目录路径
         strcpy(stack[++top], "/");
+        //printf("Push2: %s\n", stack[top]);
         for (int i = 0; i < cnt; i++) {
             strcpy(stack[++top], splited[i]);
+            //printf("Push3: %s\n", stack[top]);
         }
         start = 1;
     } else {
         char* splited[MAXOPENFILE];
         int cnt = split_path(currentdir, splited); // 分割当前目录路径
         strcpy(stack[++top], "/");
+        //printf("Push4: %s\n", stack[top]);
         for (int i = 0; i < cnt; i++) {
             strcpy(stack[++top], splited[i]);
+            //printf("Push5: %s\n", stack[top]);
         }
         start = 0;
     }
+
+    // 分割path
+    char* parts[MAXOPENFILE];
+    int count = split_path(path, parts); // 分割路径字符串
 
     // 逐层解析路径
     for (int i = start; i < count; i++) {
@@ -311,19 +320,22 @@ void parse_path(char* path, char* res) {
             }
         } else {
             strcpy(stack[++top], parts[i]);
+            //printf("Push6: %s\n", stack[top]);
         }
     }
-
+    //printf("Origin Res : %s\n", res);
     for (int i = 0; i <= top; i++) {
-        if (i == 0) {
+        //printf("Stack[%d]: %s\n", i, stack[i]);
+        if (i == 0 || i == 1) {
             strcat(res, stack[i]);
+            //printf("Res1: %s Cnt: %d\n", res, i);
         } else {
             strcat(res, "/");
             strcat(res, stack[i]);
+            //printf("Res2: %s Cnt: %d\n", res, i);
         }
     }
     strcat(res, "/"); // 确保以/结尾
-    free(original);
 }
 
 void my_cd(char* dirname) {
@@ -331,7 +343,6 @@ void my_cd(char* dirname) {
         printf("Current directory: %s\n", currentdir);
         return;
     }
-
     if (strcmp(dirname, ".") == 0) {
         return; // 当前目录，不做任何操作
     }
@@ -342,7 +353,6 @@ void my_cd(char* dirname) {
             printf("Already at root directory\n");
             return;
         }
-
         // 获取父目录路径
         char parent_dir[80];
         strcpy(parent_dir, currentdir);
@@ -387,10 +397,12 @@ void my_cd(char* dirname) {
 
     // 解析路径为一条绝对路径
     char parsed_path[80];
+    memset(parsed_path, 0, sizeof(parsed_path)); // 再次解析时务必清空原有内容
     parse_path(dirname, parsed_path);
+    //printf("Parsed path: %s\n", parsed_path);
 
     char* parts[MAXOPENFILE];
-    char matched_path[80] = ""; // 用于存储匹配的路径
+    char matched_path[80] = "/"; // 用于存储匹配的路径
     int count = split_path(parsed_path, parts); // 分割路径字符串
 
     useropen* buffer = (useropen*)malloc(sizeof(useropen)); // 设置缓冲区用于从根目录解析路径(相当于当前解析到的目录)
@@ -519,7 +531,6 @@ void my_ls() {
     printf("\n%12d File(s) %15ld bytes\n", file_count, total_size);
     printf("%12d Dir(s)\n", dir_count);
 }
-
 
 // 辅助函数：检查目录是否为空
 bool is_dir_empty(useropen* dir) {
@@ -1345,6 +1356,8 @@ int main() {
             int len;
             scanf("%d %d", &fd, &len);
             my_read(fd, len);
+        } else if (strcmp(cmd, "pwd") == 0) {
+            printf("Current directory: %s\n", currentdir);
         } else {
             printf("Unknown command.\n");
         }
